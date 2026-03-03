@@ -257,8 +257,8 @@ if st.button("🔄 Scan Entire Week (Strategy Mode)"):
                     if score > days_summary[date_str]["risk"]: days_summary[date_str]["risk"] = score
                     for r in reasons: days_summary[date_str]["reasons"].add(f"{r} ({loc_name})")
     
-    cols = st.columns(min(5, len(days_summary)))
-    for i, date_key in enumerate(list(days_summary.keys())[:5]):
+    cols = st.columns(min(10, len(days_summary)))
+    for i, date_key in enumerate(list(days_summary.keys())[:10]):
         with cols[i]:
             r = days_summary[date_key]["risk"]
             if r == 0:
@@ -291,7 +291,7 @@ if ref_data:
             seen_dates.add(date_str)
             unique_dates.append(date_str)
     
-    selected_date_str = st.selectbox("📅 Plan for (Hour-by-Hour):", unique_dates[:5])
+    selected_date_str = st.selectbox("📅 Plan for (Hour-by-Hour):", unique_dates[:10])
     st.info(route_data["note"])
 
     processed_data_out = {}
