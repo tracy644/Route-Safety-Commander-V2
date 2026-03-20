@@ -1,13 +1,18 @@
-import streamlit as st
-import requests
-import pandas as pd
-from dateutil import parser
-from datetime import datetime, timedelta
 import math
 import re
+from dateutil import parser
+
+import pandas as pd
+import requests
+import streamlit as st
+
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Route Safety Commander V2", page_icon="🚛", layout="wide")
+
+if "selected_day" not in st.session_state:
+    st.session_state.selected_day = None
+
 
 # --- ROUTE DATABASE ---
 ROUTES = {
@@ -22,14 +27,14 @@ ROUTES = {
             "4th of July Pass": "47.548,-116.503",
             "Lookout Pass": "47.456,-115.696",
             "Missoula Valley": "46.916,-114.090",
-            "McDonald Pass": "46.586,-112.311"
+            "McDonald Pass": "46.586,-112.311",
         },
         "urls": {
             "4th of July Pass": "https://api.weather.gov/gridpoints/OTX/168,102/forecast/hourly",
             "Lookout Pass": "https://api.weather.gov/gridpoints/MSO/56,102/forecast/hourly",
             "Missoula Valley": "https://api.weather.gov/gridpoints/MSO/86,76/forecast/hourly",
-            "McDonald Pass": "https://api.weather.gov/gridpoints/TFX/62,50/forecast/hourly"
-        }
+            "McDonald Pass": "https://api.weather.gov/gridpoints/TFX/62,50/forecast/hourly",
+        },
     },
     "DAA Auction (Airway Heights, WA)": {
         "direction": "West",
@@ -41,13 +46,13 @@ ROUTES = {
         "coords": {
             "State Line": "47.690,-117.040",
             "Sunset Hill": "47.650,-117.450",
-            "West Plains (DAA)": "47.630,-117.570"
+            "West Plains (DAA)": "47.630,-117.570",
         },
         "urls": {
             "State Line": "https://api.weather.gov/gridpoints/OTX/151,102/forecast/hourly",
             "Sunset Hill": "https://api.weather.gov/gridpoints/OTX/136,101/forecast/hourly",
-            "West Plains (DAA)": "https://api.weather.gov/gridpoints/OTX/132,100/forecast/hourly"
-        }
+            "West Plains (DAA)": "https://api.weather.gov/gridpoints/OTX/132,100/forecast/hourly",
+        },
     },
     "Whitefish, MT (via St. Regis)": {
         "direction": "North",
@@ -59,17 +64,17 @@ ROUTES = {
         "coords": {
             "4th of July Pass": "47.548,-116.503",
             "Lookout Pass": "47.456,-115.696",
-            "St. Regis Canyon": "47.300,-115.100", 
-            "Polson Hill": "47.693,-114.163",     
-            "Whitefish": "48.411,-114.341"
+            "St. Regis Canyon": "47.300,-115.100",
+            "Polson Hill": "47.693,-114.163",
+            "Whitefish": "48.411,-114.341",
         },
         "urls": {
             "4th of July Pass": "https://api.weather.gov/gridpoints/OTX/168,102/forecast/hourly",
             "Lookout Pass": "https://api.weather.gov/gridpoints/MSO/56,102/forecast/hourly",
             "St. Regis Canyon": "https://api.weather.gov/gridpoints/MSO/46,95/forecast/hourly",
             "Polson Hill": "https://api.weather.gov/gridpoints/MSO/77,118/forecast/hourly",
-            "Whitefish": "https://api.weather.gov/gridpoints/MSO/73,139/forecast/hourly"
-        }
+            "Whitefish": "https://api.weather.gov/gridpoints/MSO/73,139/forecast/hourly",
+        },
     },
     "Pullman, WA (US-95 South)": {
         "direction": "South",
@@ -79,15 +84,15 @@ ROUTES = {
         "stops_out": ["Mica Grade", "Harvard Hill", "Moscow/Pullman"],
         "stops_ret": ["Moscow/Pullman", "Harvard Hill", "Mica Grade"],
         "coords": {
-            "Mica Grade": "47.591,-116.835",     
-            "Harvard Hill": "46.950,-116.660",   
-            "Moscow/Pullman": "46.732,-117.000"  
+            "Mica Grade": "47.591,-116.835",
+            "Harvard Hill": "46.950,-116.660",
+            "Moscow/Pullman": "46.732,-117.000",
         },
         "urls": {
             "Mica Grade": "https://api.weather.gov/gridpoints/OTX/161,97/forecast/hourly",
             "Harvard Hill": "https://api.weather.gov/gridpoints/OTX/168,68/forecast/hourly",
-            "Moscow/Pullman": "https://api.weather.gov/gridpoints/OTX/158,55/forecast/hourly"
-        }
+            "Moscow/Pullman": "https://api.weather.gov/gridpoints/OTX/158,55/forecast/hourly",
+        },
     },
     "Lewiston, ID (US-95 South)": {
         "direction": "South",
@@ -99,82 +104,122 @@ ROUTES = {
         "coords": {
             "Mica Grade": "47.591,-116.835",
             "Harvard Hill": "46.950,-116.660",
-            "Lewiston Grade": "46.460,-116.980"
+            "Lewiston Grade": "46.460,-116.980",
         },
         "urls": {
             "Mica Grade": "https://api.weather.gov/gridpoints/OTX/161,97/forecast/hourly",
             "Harvard Hill": "https://api.weather.gov/gridpoints/OTX/168,68/forecast/hourly",
-            "Lewiston Grade": "https://api.weather.gov/gridpoints/OTX/162,38/forecast/hourly"
-        }
-    }
+            "Lewiston Grade": "https://api.weather.gov/gridpoints/OTX/162,38/forecast/hourly",
+        },
+    },
+    "Colville, WA (US-395 North)": {
+        "direction": "North",
+        "note": "⚠️ Snow Belt: Chewelah area often holds snow when Spokane is raining.",
+        "outbound_hours": [8, 9, 10, 11],
+        "return_hours": [12, 13, 14, 15],
+        "stops_out": ["Deer Park", "Chewelah", "Colville"],
+        "stops_ret": ["Colville", "Chewelah", "Deer Park"],
+        "coords": {
+            "Deer Park": "47.950,-117.470",
+            "Chewelah": "48.270,-117.710",
+            "Colville": "48.540,-117.900",
+        },
+        "urls": {
+            "Deer Park": "https://api.weather.gov/gridpoints/OTX/136,110/forecast/hourly",
+            "Chewelah": "https://api.weather.gov/gridpoints/OTX/130,123/forecast/hourly",
+            "Colville": "https://api.weather.gov/gridpoints/OTX/124,133/forecast/hourly",
+        },
+    },
 }
 
-# --- LOGIC ENGINE ---
-@st.cache_data(ttl=900) 
-def fetch_hourly_data(url):
+
+# --- DATA HELPERS ---
+@st.cache_data(ttl=900)
+def fetch_hourly_data(url: str):
     try:
-        headers = {'User-Agent': '(vandal-route-planner, contact@example.com)'}
+        headers = {"User-Agent": "(vandal-route-planner, contact@example.com)"}
+
         if "points" in url and "gridpoints" not in url:
             r_meta = requests.get(url, headers=headers, timeout=5)
             r_meta.raise_for_status()
-            url = r_meta.json()['properties']['forecastHourly']
+            url = r_meta.json()["properties"]["forecastHourly"]
+
         r = requests.get(url, headers=headers, timeout=5)
         r.raise_for_status()
-        return r.json().get('properties', {}).get('periods', [])
-    except:
+        return r.json().get("properties", {}).get("periods", [])
+    except Exception:
         return []
 
+
 @st.cache_data(ttl=300)
-def fetch_active_alerts(lat_lon_str):
+def fetch_active_alerts(lat_lon_str: str):
     url = f"https://api.weather.gov/alerts/active?point={lat_lon_str}"
     try:
-        headers = {'User-Agent': '(vandal-route-planner, contact@example.com)'}
+        headers = {"User-Agent": "(vandal-route-planner, contact@example.com)"}
         r = requests.get(url, headers=headers, timeout=5)
         r.raise_for_status()
         data = r.json()
         alerts = []
-        for f in data.get('features', []):
-            event = f.get('properties', {}).get('event', '')
+
+        for feature in data.get("features", []):
+            event = feature.get("properties", {}).get("event", "")
             if any(x in event for x in ["Winter", "Wind", "Ice", "Blizzard", "Snow", "Flood"]):
                 alerts.append(event.upper())
+
         return list(set(alerts))
-    except:
+    except Exception:
         return []
 
+
 def get_int(val):
-    if val is None: return 0
-    if isinstance(val, dict) and 'value' in val: val = val['value']
-    nums = re.findall(r'\d+', str(val))
+    if val is None:
+        return 0
+    if isinstance(val, dict) and "value" in val:
+        val = val["value"]
+    nums = re.findall(r"\d+", str(val))
     return int(nums[0]) if nums else 0
 
-def add_weather_icon(forecast_text):
-    if not forecast_text: return ""
+
+def add_weather_icon(forecast_text: str):
+    if not forecast_text:
+        return ""
+
     text = forecast_text.lower()
     icon = ""
-    if "snow" in text: icon = "🌨️"
-    elif "rain" in text: icon = "🌧️"
-    elif "shower" in text: icon = "🌦️"
-    elif "cloud" in text: icon = "☁️"
-    elif "clear" in text or "sunny" in text: icon = "☀️"
-    elif "fog" in text: icon = "🌫️"
-    elif "wind" in text: icon = "💨"
+
+    if "snow" in text:
+        icon = "🌨️"
+    elif "rain" in text:
+        icon = "🌧️"
+    elif "shower" in text:
+        icon = "🌦️"
+    elif "cloud" in text:
+        icon = "☁️"
+    elif "clear" in text or "sunny" in text:
+        icon = "☀️"
+    elif "fog" in text:
+        icon = "🌫️"
+    elif "wind" in text:
+        icon = "💨"
+
     return f"{icon} {forecast_text}"
+
 
 def analyze_hour(row, location_name, trip_direction="Out", overall_direction="East"):
     risk_score = 0
     alerts = []
     major_reasons = []
-    
-    temp = row.get('temperature', 32)
-    short_forecast = row.get('shortForecast', '').lower()
-    is_daytime = row.get('isDaytime', True)
-    
-    sustained = get_int(row.get('windSpeed', 0))
-    gust = get_int(row.get('windGust', 0))
+
+    temp = row.get("temperature", 32)
+    short_forecast = row.get("shortForecast", "").lower()
+    is_daytime = row.get("isDaytime", True)
+
+    sustained = get_int(row.get("windSpeed", 0))
+    gust = get_int(row.get("windGust", 0))
     effective_wind = max(sustained, gust)
-    pop = get_int(row.get('probabilityOfPrecipitation', 0))
-    
-    # 1. Road Surface
+    pop = get_int(row.get("probabilityOfPrecipitation", 0))
+
+    # 1. Road surface risk
     if "heavy snow" in short_forecast:
         risk_score += 3
         alerts.append("❄️ HEAVY SNOW")
@@ -192,15 +237,15 @@ def analyze_hour(row, location_name, trip_direction="Out", overall_direction="Ea
         if temp <= 32:
             risk_score += 3
             alerts.append("🧊 FREEZING RAIN")
-            major_reasons.append("FREEZING RAIN")
+            major_reasons.append("Freezing Rain")
         elif temp <= 37:
             risk_score += 1
             alerts.append("🧊 Possible Black Ice")
             major_reasons.append("Black Ice Risk")
-            
-    # 2. Wind
+
+    # 2. Wind risk
     if effective_wind >= 50:
-        risk_score += 3 
+        risk_score += 3
         alerts.append(f"💨 STORM GUSTS {effective_wind} MPH")
         major_reasons.append(f"Severe Winds ({effective_wind} mph)")
     elif effective_wind >= 40:
@@ -210,7 +255,7 @@ def analyze_hour(row, location_name, trip_direction="Out", overall_direction="Ea
     elif effective_wind >= 30:
         risk_score += 1
         alerts.append(f"💨 Windy ({effective_wind})")
-        major_reasons.append("Windy conditions")
+        major_reasons.append("Windy Conditions")
 
     # 3. Visibility
     if "fog" in short_forecast or "haze" in short_forecast:
@@ -218,65 +263,126 @@ def analyze_hour(row, location_name, trip_direction="Out", overall_direction="Ea
         alerts.append("🌫️ Low Visibility")
         major_reasons.append("Fog/Haze")
 
-    # 4. Sun Glare
+    # 4. Sun glare
     try:
-        hour_int = parser.parse(row['startTime']).hour
+        hour_int = parser.parse(row["startTime"]).hour
         if "sunny" in short_forecast or "clear" in short_forecast:
             if overall_direction in ["East", "West"]:
-                if trip_direction == "Out" and 7 <= hour_int <= 10: alerts.append("😎 Sun Glare")
-                if trip_direction == "Ret" and 15 <= hour_int <= 18: alerts.append("😎 Sun Glare")
-    except: pass 
+                if trip_direction == "Out" and 7 <= hour_int <= 10:
+                    alerts.append("😎 Sun Glare")
+                if trip_direction == "Ret" and 15 <= hour_int <= 18:
+                    alerts.append("😎 Sun Glare")
+    except Exception:
+        pass
 
     status = "🟢"
-    if risk_score == 1: status = "🟡"
-    if risk_score == 2: status = "🟠"
-    if risk_score >= 3: status = "🔴"
-    
+    if risk_score == 1:
+        status = "🟡"
+    elif risk_score == 2:
+        status = "🟠"
+    elif risk_score >= 3:
+        status = "🔴"
+
     return status, risk_score, alerts, effective_wind, pop, is_daytime, major_reasons
+
+
+def risk_label(risk_score: int):
+    if risk_score == 0:
+        return "GO"
+    if risk_score == 1:
+        return "CAUTION"
+    if risk_score == 2:
+        return "RISK"
+    return "NO GO"
+
+
+def get_label_block(risk_score: int):
+    if risk_score == 0:
+        return "🟢 GO"
+    if risk_score == 1:
+        return "🟡 CAUTION"
+    if risk_score == 2:
+        return "🟠 RISK"
+    return "🔴 NO GO"
+
+
+def render_trip_table(data_map, location_order):
+    for name in location_order:
+        if name in data_map and not data_map[name].empty:
+            with st.expander(f"📍 {name}", expanded=True):
+                st.dataframe(
+                    data_map[name][["Time", "Temp", "Precip %", "Wind", "Weather", "Status", "Alerts"]],
+                    hide_index=True,
+                    use_container_width=True,
+                )
+
 
 # --- UI START ---
 st.title("🚛 Route Safety Commander V2")
 
-# 1. SELECT ROUTE
 route_name = st.selectbox("Select Destination", list(ROUTES.keys()))
 route_data = ROUTES[route_name]
 
-# --- V2 FEATURE: WEEKLY SCANNER ---
+st.markdown("### Strategic Overview")
+
 if st.button("🔄 Scan Entire Week (Strategy Mode)"):
-    st.subheader("📅 5-Day Strategic Outlook")
+    st.session_state.selected_day = None
+    st.session_state[f"scan_route_{route_name}"] = True
+
+scan_key = f"scan_route_{route_name}"
+if scan_key not in st.session_state:
+    st.session_state[scan_key] = False
+
+if st.session_state[scan_key]:
+    st.subheader("📅 Route Outlook")
     days_summary = {}
+
     with st.spinner("Analyzing weekly patterns..."):
         for loc_name, url in route_data["urls"].items():
             raw_data = fetch_hourly_data(url)
-            for p in raw_data:
-                dt = parser.parse(p['startTime'])
-                date_str = dt.strftime('%A, %b %d')
-                if date_str not in days_summary: days_summary[date_str] = {"risk": 0, "reasons": set()}
+
+            for period in raw_data:
+                dt = parser.parse(period["startTime"])
+                date_str = dt.strftime("%A, %b %d")
+
+                if date_str not in days_summary:
+                    days_summary[date_str] = {"risk": 0, "reasons": set(), "worst_pass": None}
+
                 if 7 <= dt.hour <= 19:
-                    _, score, _, _, _, _, reasons = analyze_hour(p, loc_name, "Out", route_data.get("direction"))
-                    if score > days_summary[date_str]["risk"]: days_summary[date_str]["risk"] = score
-                    for r in reasons: days_summary[date_str]["reasons"].add(f"{r} ({loc_name})")
-    
-    cols = st.columns(min(10, len(days_summary)))
-    for i, date_key in enumerate(list(days_summary.keys())[:10]):
-        with cols[i]:
-            r = days_summary[date_key]["risk"]
-            if r == 0:
-                st.success(f"**{date_key}**\n\n### 🟢 GO")
-            elif r == 1:
-                st.warning(f"**{date_key}**\n\n### 🟡 CAUTION")
-            elif r == 2:
-                st.info(f"**{date_key}**\n\n### 🟠 RISK")
-            else:
-                st.error(f"**{date_key}**\n\n### 🔴 NO GO")
-                
-            if days_summary[date_key]["reasons"]:
-                st.caption(", ".join(list(days_summary[date_key]["reasons"])[:2]))
+                    _, score, _, _, _, _, reasons = analyze_hour(
+                        period, loc_name, "Out", route_data.get("direction")
+                    )
+
+                    if score > days_summary[date_str]["risk"]:
+                        days_summary[date_str]["risk"] = score
+                        days_summary[date_str]["worst_pass"] = loc_name
+
+                    for reason in reasons:
+                        days_summary[date_str]["reasons"].add(f"{reason} ({loc_name})")
+
+    date_keys = list(days_summary.keys())[:10]
+    cols = st.columns(min(5, len(date_keys))) if date_keys else []
+
+    for i, date_key in enumerate(date_keys):
+        col = cols[i % len(cols)]
+        with col:
+            risk = days_summary[date_key]["risk"]
+            label = risk_label(risk)
+            worst_pass = days_summary[date_key]["worst_pass"]
+            reasons = list(days_summary[date_key]["reasons"])[:2]
+
+            if st.button(f"{date_key} — {label}", key=f"{route_name}_{date_key}"):
+                st.session_state.selected_day = date_key
+
+            st.caption(get_label_block(risk))
+            if worst_pass:
+                st.caption(f"Worst pass: {worst_pass}")
+            if reasons:
+                st.caption(", ".join(reasons))
 
 st.divider()
 
-# --- ORIGINAL FEATURE: DAILY DEEP-DIVE ---
-st.markdown("### *Tactical Daily Deep-Dive*")
+st.markdown("### Tactical Daily Deep-Dive")
 
 ref_url = list(route_data["urls"].values())[0]
 ref_data = fetch_hourly_data(ref_url)
@@ -284,14 +390,26 @@ ref_data = fetch_hourly_data(ref_url)
 if ref_data:
     unique_dates = []
     seen_dates = set()
-    for p in ref_data:
-        dt = parser.parse(p['startTime'])
-        date_str = dt.strftime('%A, %b %d')
+
+    for period in ref_data:
+        dt = parser.parse(period["startTime"])
+        date_str = dt.strftime("%A, %b %d")
         if date_str not in seen_dates:
             seen_dates.add(date_str)
             unique_dates.append(date_str)
-    
-    selected_date_str = st.selectbox("📅 Plan for (Hour-by-Hour):", unique_dates[:10])
+
+    if st.session_state.selected_day in unique_dates:
+        selected_date_str = st.session_state.selected_day
+        st.selectbox(
+            "📅 Plan for (Hour-by-Hour):",
+            unique_dates[:10],
+            index=unique_dates[:10].index(selected_date_str),
+            key="selected_date_display",
+        )
+    else:
+        selected_date_str = st.selectbox("📅 Plan for (Hour-by-Hour):", unique_dates[:10])
+
+    st.subheader(f"📍 Selected Day: {selected_date_str}")
     st.info(route_data["note"])
 
     processed_data_out = {}
@@ -302,66 +420,91 @@ if ref_data:
         lat_lon = route_data["coords"].get(name)
         if lat_lon:
             active_alerts = fetch_active_alerts(lat_lon)
-            for alert in active_alerts: official_alerts_found.append(f"**{name}:** {alert}")
+            for alert in active_alerts:
+                official_alerts_found.append(f"**{name}:** {alert}")
 
         raw = fetch_hourly_data(url)
         day_rows_out = []
         day_rows_ret = []
+
         for hour in raw:
-            dt = parser.parse(hour['startTime'])
-            if dt.strftime('%A, %b %d') == selected_date_str:
-                stat, score, alerts_list, wind, pop, daytime, _ = analyze_hour(hour, name, "Out", route_data.get("direction"))
-                time_disp = dt.strftime('%I %p')
+            dt = parser.parse(hour["startTime"])
+            if dt.strftime("%A, %b %d") == selected_date_str:
+                stat, score, alerts_list, wind, pop, daytime, _ = analyze_hour(
+                    hour, name, "Out", route_data.get("direction")
+                )
+                time_disp = dt.strftime("%I %p")
                 time_disp = f"☀️ {time_disp}" if daytime else f"🌑 {time_disp}"
-                
+
                 row_data = {
-                    "Hour": dt.hour, "Time": time_disp,
+                    "Hour": dt.hour,
+                    "Time": time_disp,
                     "Temp": f"{hour.get('temperature')}°",
                     "Precip %": f"{pop}%" if pop > 0 else "-",
                     "Wind": f"{wind} {hour.get('windDirection')}",
-                    "Weather": add_weather_icon(hour.get('shortForecast')),
-                    "Status": stat, "Alerts": ", ".join(alerts_list)
+                    "Weather": add_weather_icon(hour.get("shortForecast")),
+                    "Status": stat,
+                    "Alerts": ", ".join(alerts_list),
                 }
-                if dt.hour in route_data["outbound_hours"]: day_rows_out.append(row_data)
-                if dt.hour in route_data["return_hours"]: day_rows_ret.append(row_data)
-        
+
+                if dt.hour in route_data["outbound_hours"]:
+                    day_rows_out.append(row_data)
+                if dt.hour in route_data["return_hours"]:
+                    day_rows_ret.append(row_data)
+
         processed_data_out[name] = pd.DataFrame(day_rows_out)
         processed_data_ret[name] = pd.DataFrame(day_rows_ret)
 
-    tab_out, tab_ret, tab_alerts, tab_full = st.tabs(["🚀 Outbound", "↩️ Return", "🚨 Alerts", "📋 Details"])
-    
-    def render_trip_table(data_map, location_order):
-        for name in location_order:
-            if name in data_map and not data_map[name].empty:
-                with st.expander(f"📍 {name}", expanded=True):
-                    st.dataframe(data_map[name][['Time', 'Temp', 'Precip %', 'Wind', 'Weather', 'Status', 'Alerts']], hide_index=True, use_container_width=True)
+    tab_out, tab_ret, tab_alerts, tab_full = st.tabs(
+        ["🚀 Outbound", "↩️ Return", "🚨 Alerts", "📋 Details"]
+    )
 
     with tab_out:
         st.subheader(f"Outbound Trip: {selected_date_str}")
         render_trip_table(processed_data_out, route_data["stops_out"])
+
     with tab_ret:
         st.subheader(f"Return Trip: {selected_date_str}")
         render_trip_table(processed_data_ret, route_data["stops_ret"])
+
     with tab_alerts:
         st.subheader("Official NWS Warnings")
         if official_alerts_found:
-            for a in set(official_alerts_found): st.error(a)
-        else: st.success("No active NWS warnings.")
+            for alert in sorted(set(official_alerts_found)):
+                st.error(alert)
+        else:
+            st.success("No active NWS warnings.")
+
     with tab_full:
         st.write("Full 24-hour breakdown for a specific location.")
         loc_select = st.selectbox("Select Location", list(route_data["urls"].keys()))
         raw_full = fetch_hourly_data(route_data["urls"][loc_select])
         full_rows = []
+
         for hour in raw_full:
-            dt = parser.parse(hour['startTime'])
-            if dt.strftime('%A, %b %d') == selected_date_str:
+            dt = parser.parse(hour["startTime"])
+            if dt.strftime("%A, %b %d") == selected_date_str:
                 stat, _, alerts_list, wind, pop, daytime, _ = analyze_hour(hour, loc_select)
-                full_rows.append({
-                    "Time": dt.strftime('%I %p'), "Temp": f"{hour.get('temperature')}°",
-                    "Precip %": f"{pop}%", "Wind": f"{wind}", 
-                    "Weather": hour.get('shortForecast'), "Status": stat, "Alerts": ", ".join(alerts_list)
-                })
+                full_rows.append(
+                    {
+                        "Time": dt.strftime("%I %p"),
+                        "Temp": f"{hour.get('temperature')}°",
+                        "Precip %": f"{pop}%",
+                        "Wind": f"{wind}",
+                        "Weather": hour.get("shortForecast"),
+                        "Status": stat,
+                        "Alerts": ", ".join(alerts_list),
+                    }
+                )
+
         st.dataframe(pd.DataFrame(full_rows), hide_index=True, use_container_width=True)
+else:
+    st.error("No forecast data was returned for this route right now.")
 
 st.markdown("---")
-st.markdown("**Essential Links:** [Idaho 511](https://511.idaho.gov/) | [MDT Maps](https://www.mdt.mt.gov/travinfo/) | [WSDOT](https://wsdot.com/Travel/Real-time/Map/)")
+st.markdown(
+    "**Essential Links:** "
+    "[Idaho 511](https://511.idaho.gov/) | "
+    "[MDT Maps](https://www.mdt.mt.gov/travinfo/) | "
+    "[WSDOT](https://wsdot.com/Travel/Real-time/Map/)"
+)
