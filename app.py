@@ -311,7 +311,7 @@ def render_trip_table(data_map, location_order):
         if name in data_map and not data_map[name].empty:
             with st.expander(f"📍 {name}", expanded=True):
                 st.dataframe(
-                    data_map[name][["Time", "Temp", "Precip %", "Wind", "Weather", "Status", "Alerts"]],
+                    data_map[name][["Time", "Status", "Temp", "Precip %", "Wind", "Weather", "Alerts"]],
                     hide_index=True,
                     use_container_width=True,
                 )
