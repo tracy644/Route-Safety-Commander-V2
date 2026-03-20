@@ -359,7 +359,7 @@ def reason_text_from_reasons(reasons):
     return ", ".join(reasons[:2])
 
 
-def build_hour_row(hour, status, alerts_list, wind, pop, daytime):
+def build_hour_row(hour, status, alerts_list, wind, pop, daytime, risk_score):
     dt = parser.parse(hour["startTime"])
     time_disp = dt.strftime("%I %p")
     time_disp = f"☀️ {time_disp}" if daytime else f"🌑 {time_disp}"
@@ -372,6 +372,7 @@ def build_hour_row(hour, status, alerts_list, wind, pop, daytime):
         "Wind": f"{wind} {hour.get('windDirection')}",
         "Weather": add_weather_icon(hour.get("shortForecast")),
         "Alerts": ", ".join(alerts_list),
+        "RiskScore": risk_score,
     }
 
 
@@ -412,6 +413,21 @@ def summarize_day_hourly(route_data, selected_date_str):
     return result
 
 
+def collapse_to_worst_per_hour(rows):
+    if not rows:
+        return pd.DataFrame(columns=["Hour", "Time", "Status", "Temp", "Precip %", "Wind", "Weather", "Alerts"])
+
+    best_by_hour = {}
+    for row in rows:
+        hour = row["Hour"]
+        if hour not in best_by_hour or row["RiskScore"] > best_by_hour[hour]["RiskScore"]:
+            best_by_hour[hour] = row
+
+    collapsed = list(best_by_hour.values())
+    df = pd.DataFrame(collapsed).sort_values(by=["Hour"])
+    return df[["Hour", "Time", "Status", "Temp", "Precip %", "Wind", "Weather", "Alerts"]]
+
+
 def build_helena_block(route_data, selected_date_str, trip_label, start_hour, end_hour, stops):
     segment_tables = {}
     worst_score = -1
@@ -435,22 +451,15 @@ def build_helena_block(route_data, selected_date_str, trip_label, start_hour, en
                     status, score, alerts_list, wind, pop, daytime, reasons = analyze_hour(
                         hour, stop, trip_label, route_data.get("direction")
                     )
-                    matching_rows.append(build_hour_row(hour, status, alerts_list, wind, pop, daytime))
+                    row = build_hour_row(hour, status, alerts_list, wind, pop, daytime, score)
+                    matching_rows.append(row)
+
                     if score > segment_worst_score:
                         segment_worst_score = score
                         segment_worst_reasons = reasons
                         segment_worst_status = status
 
-        if matching_rows:
-            df = pd.DataFrame(matching_rows)
-            df = df.sort_values(by=["Hour", "Time"]).drop_duplicates(
-                subset=["Time", "Status", "Temp", "Precip %", "Wind", "Weather", "Alerts"]
-            )
-            segment_tables[stop] = df
-        else:
-            segment_tables[stop] = pd.DataFrame(
-                columns=["Hour", "Time", "Status", "Temp", "Precip %", "Wind", "Weather", "Alerts"]
-            )
+        segment_tables[stop] = collapse_to_worst_per_hour(matching_rows)
 
         if segment_worst_score > worst_score:
             worst_score = segment_worst_score
@@ -634,18 +643,18 @@ if ref_data:
             for hour in raw:
                 dt = parser.parse(hour["startTime"])
                 if dt.strftime("%A, %b %d") == selected_date_str:
-                    stat, _, alerts_list, wind, pop, daytime, _ = analyze_hour(
+                    stat, score, alerts_list, wind, pop, daytime, _ = analyze_hour(
                         hour, name, "Out", route_data.get("direction")
                     )
-                    row_data = build_hour_row(hour, stat, alerts_list, wind, pop, daytime)
+                    row_data = build_hour_row(hour, stat, alerts_list, wind, pop, daytime, score)
 
                     if dt.hour in route_data["outbound_hours"]:
                         day_rows_out.append(row_data)
                     if dt.hour in route_data["return_hours"]:
                         day_rows_ret.append(row_data)
 
-            processed_data_out[name] = pd.DataFrame(day_rows_out)
-            processed_data_ret[name] = pd.DataFrame(day_rows_ret)
+            processed_data_out[name] = collapse_to_worst_per_hour(day_rows_out)
+            processed_data_ret[name] = collapse_to_worst_per_hour(day_rows_ret)
 
     tab_out, tab_ret, tab_alerts, tab_full = st.tabs(
         ["🚀 Outbound", "↩️ Return", "🚨 Alerts", "📋 Details"]
@@ -678,22 +687,17 @@ if ref_data:
         for hour in raw_full:
             dt = parser.parse(hour["startTime"])
             if dt.strftime("%A, %b %d") == selected_date_str:
-                stat, _, alerts_list, wind, pop, daytime, _ = analyze_hour(hour, loc_select)
-                full_rows.append(
-                    {
-                        "Time": dt.strftime("%I %p"),
-                        "Status": stat,
-                        "Temp": f"{hour.get('temperature')}°",
-                        "Precip %": f"{pop}%",
-                        "Wind": f"{wind}",
-                        "Weather": hour.get("shortForecast"),
-                        "Alerts": ", ".join(alerts_list),
-                    }
-                )
+                stat, score, alerts_list, wind, pop, daytime, _ = analyze_hour(hour, loc_select)
+                row = build_hour_row(hour, stat, alerts_list, wind, pop, daytime, score)
+                full_rows.append(row)
 
         if full_rows:
-            full_df = pd.DataFrame(full_rows).drop_duplicates()
-            st.dataframe(full_df, hide_index=True, use_container_width=True)
+            full_df = collapse_to_worst_per_hour(full_rows)
+            st.dataframe(
+                full_df[["Time", "Status", "Temp", "Precip %", "Wind", "Weather", "Alerts"]],
+                hide_index=True,
+                use_container_width=True,
+            )
         else:
             st.info("No hourly data returned for that location and day.")
 else:
