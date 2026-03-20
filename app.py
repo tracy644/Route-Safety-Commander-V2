@@ -15,10 +15,8 @@ if "selected_day" not in st.session_state:
 ROUTES = {
     "Helena, MT (I-90 East)": {
         "direction": "East",
-        "note": "⚠️ Helena route uses broad local-time display windows. Outbound shows 7 AM–12 PM local station time. Return shows 12 PM–5 PM local station time.",
-        "mode": "helena_broad",
-        "outbound_range": (7, 12),
-        "return_range": (12, 17),
+        "note": "⚠️ Helena route uses locked segment hours by local station time. Pacific time for 4th of July and Lookout. Mountain time for Missoula Flats and McDonald Pass.",
+        "mode": "helena_custom_hours",
         "stops_out": [
             "4th of July Pass",
             "Lookout Pass",
@@ -48,6 +46,18 @@ ROUTES = {
                 "https://api.weather.gov/gridpoints/MSO/70,85/forecast/hourly",
                 "https://api.weather.gov/gridpoints/MSO/86,76/forecast/hourly",
             ]
+        },
+        "outbound_segment_hours": {
+            "4th of July Pass": [7, 8, 9],
+            "Lookout Pass": [8, 9, 10],
+            "Missoula Flats": [9, 10, 11],
+            "McDonald Pass": [11, 12],
+        },
+        "return_segment_hours": {
+            "McDonald Pass": [12, 13],
+            "Missoula Flats": [13, 14, 15],
+            "Lookout Pass": [14, 15, 16],
+            "4th of July Pass": [15, 16],
         },
     },
     "DAA Auction (Airway Heights, WA)": {
@@ -355,7 +365,7 @@ def analyze_hour(row, location_name, trip_direction="Out", overall_direction="Ea
 
 def reason_text_from_reasons(reasons):
     if not reasons:
-        return "General adverse conditions in the selected time block."
+        return "General adverse conditions in the selected hours."
     return ", ".join(reasons[:2])
 
 
@@ -381,7 +391,7 @@ def render_trip_table(data_map, location_order):
         with st.expander(f"📍 {name}", expanded=True):
             df = data_map.get(name, pd.DataFrame())
             if df is None or df.empty:
-                st.info("No forecast rows found in this time block for that day.")
+                st.info("No forecast rows found for those selected hours.")
             else:
                 display_df = df[["Time", "Status", "Temp", "Precip %", "Wind", "Weather", "Alerts"]].copy()
                 st.dataframe(display_df, hide_index=True, use_container_width=True)
@@ -428,7 +438,7 @@ def collapse_to_worst_per_hour(rows):
     return df[["Hour", "Time", "Status", "Temp", "Precip %", "Wind", "Weather", "Alerts"]]
 
 
-def build_helena_block(route_data, selected_date_str, trip_label, start_hour, end_hour, stops):
+def build_helena_block(route_data, selected_date_str, trip_label, segment_hours, stops):
     segment_tables = {}
     worst_score = -1
     worst_segment = None
@@ -436,6 +446,7 @@ def build_helena_block(route_data, selected_date_str, trip_label, start_hour, en
     worst_status = "🟢"
 
     for stop in stops:
+        allowed_hours = segment_hours[stop]
         matching_rows = []
         segment_worst_score = -1
         segment_worst_reasons = []
@@ -447,7 +458,7 @@ def build_helena_block(route_data, selected_date_str, trip_label, start_hour, en
                 dt = parser.parse(hour["startTime"])
                 if dt.strftime("%A, %b %d") != selected_date_str:
                     continue
-                if start_hour <= dt.hour <= end_hour:
+                if dt.hour in allowed_hours:
                     status, score, alerts_list, wind, pop, daytime, reasons = analyze_hour(
                         hour, stop, trip_label, route_data.get("direction")
                     )
@@ -477,14 +488,19 @@ def build_helena_block(route_data, selected_date_str, trip_label, start_hour, en
 
 
 def summarize_day_helena(route_data, selected_date_str):
-    out_start, out_end = route_data["outbound_range"]
-    ret_start, ret_end = route_data["return_range"]
-
     outbound = build_helena_block(
-        route_data, selected_date_str, "Out", out_start, out_end, route_data["stops_out"]
+        route_data,
+        selected_date_str,
+        "Out",
+        route_data["outbound_segment_hours"],
+        route_data["stops_out"],
     )
     returned = build_helena_block(
-        route_data, selected_date_str, "Ret", ret_start, ret_end, route_data["stops_ret"]
+        route_data,
+        selected_date_str,
+        "Ret",
+        route_data["return_segment_hours"],
+        route_data["stops_ret"],
     )
 
     if outbound["score"] >= returned["score"]:
@@ -539,7 +555,7 @@ if st.session_state[scan_key]:
                 days_available.append(date_str)
 
     for date_key in days_available[:10]:
-        if route_data.get("mode") == "helena_broad":
+        if route_data.get("mode") == "helena_custom_hours":
             summary = summarize_day_helena(route_data, date_key)
             risk = summary["final_score"]
             label = summary["final_label"]
@@ -607,7 +623,7 @@ if ref_data:
             for alert in active_alerts:
                 official_alerts_found.append(f"**{name}:** {alert}")
 
-    if route_data.get("mode") == "helena_broad":
+    if route_data.get("mode") == "helena_custom_hours":
         summary = summarize_day_helena(route_data, selected_date_str)
 
         st.markdown("### Final Route Call")
