@@ -1,4 +1,3 @@
-import math
 import re
 from dateutil import parser
 
@@ -18,21 +17,31 @@ if "selected_day" not in st.session_state:
 ROUTES = {
     "Helena, MT (I-90 East)": {
         "direction": "East",
-        "note": "⚠️ Mountain Passes: McDonald Pass gusts often exceed 60 mph.",
+        "note": "⚠️ Mountain route with major exposure zones. Watch Lookout, Superior to Garrison Flats, and McDonald closely.",
         "outbound_hours": [7, 8, 9, 10, 11, 12],
         "return_hours": [12, 13, 14, 15, 16, 17, 18, 19],
-        "stops_out": ["4th of July Pass", "Lookout Pass", "Missoula Valley", "McDonald Pass"],
-        "stops_ret": ["McDonald Pass", "Missoula Valley", "Lookout Pass", "4th of July Pass"],
+        "stops_out": [
+            "4th of July Pass",
+            "Lookout Pass",
+            "Superior to Garrison Flats",
+            "McDonald Pass",
+        ],
+        "stops_ret": [
+            "McDonald Pass",
+            "Superior to Garrison Flats",
+            "Lookout Pass",
+            "4th of July Pass",
+        ],
         "coords": {
             "4th of July Pass": "47.548,-116.503",
             "Lookout Pass": "47.456,-115.696",
-            "Missoula Valley": "46.916,-114.090",
+            "Superior to Garrison Flats": "46.800,-113.500",
             "McDonald Pass": "46.586,-112.311",
         },
         "urls": {
             "4th of July Pass": "https://api.weather.gov/gridpoints/OTX/168,102/forecast/hourly",
             "Lookout Pass": "https://api.weather.gov/gridpoints/MSO/56,102/forecast/hourly",
-            "Missoula Valley": "https://api.weather.gov/gridpoints/MSO/86,76/forecast/hourly",
+            "Superior to Garrison Flats": "https://api.weather.gov/gridpoints/MSO/70,85/forecast/hourly",
             "McDonald Pass": "https://api.weather.gov/gridpoints/TFX/62,50/forecast/hourly",
         },
     },
@@ -59,8 +68,20 @@ ROUTES = {
         "note": "⚠️ Rural Route: Limited cell service in St. Regis Canyon.",
         "outbound_hours": [7, 8, 9, 10, 11],
         "return_hours": [13, 14, 15, 16, 17],
-        "stops_out": ["4th of July Pass", "Lookout Pass", "St. Regis Canyon", "Polson Hill", "Whitefish"],
-        "stops_ret": ["Whitefish", "Polson Hill", "St. Regis Canyon", "Lookout Pass", "4th of July Pass"],
+        "stops_out": [
+            "4th of July Pass",
+            "Lookout Pass",
+            "St. Regis Canyon",
+            "Polson Hill",
+            "Whitefish",
+        ],
+        "stops_ret": [
+            "Whitefish",
+            "Polson Hill",
+            "St. Regis Canyon",
+            "Lookout Pass",
+            "4th of July Pass",
+        ],
         "coords": {
             "4th of July Pass": "47.548,-116.503",
             "Lookout Pass": "47.456,-115.696",
@@ -219,7 +240,6 @@ def analyze_hour(row, location_name, trip_direction="Out", overall_direction="Ea
     effective_wind = max(sustained, gust)
     pop = get_int(row.get("probabilityOfPrecipitation", 0))
 
-    # 1. Road surface risk
     if "heavy snow" in short_forecast:
         risk_score += 3
         alerts.append("❄️ HEAVY SNOW")
@@ -243,7 +263,6 @@ def analyze_hour(row, location_name, trip_direction="Out", overall_direction="Ea
             alerts.append("🧊 Possible Black Ice")
             major_reasons.append("Black Ice Risk")
 
-    # 2. Wind risk
     if effective_wind >= 50:
         risk_score += 3
         alerts.append(f"💨 STORM GUSTS {effective_wind} MPH")
@@ -257,13 +276,11 @@ def analyze_hour(row, location_name, trip_direction="Out", overall_direction="Ea
         alerts.append(f"💨 Windy ({effective_wind})")
         major_reasons.append("Windy Conditions")
 
-    # 3. Visibility
     if "fog" in short_forecast or "haze" in short_forecast:
         risk_score = max(risk_score, 1)
         alerts.append("🌫️ Low Visibility")
         major_reasons.append("Fog/Haze")
 
-    # 4. Sun glare
     try:
         hour_int = parser.parse(row["startTime"]).hour
         if "sunny" in short_forecast or "clear" in short_forecast:
@@ -310,11 +327,8 @@ def render_trip_table(data_map, location_order):
     for name in location_order:
         if name in data_map and not data_map[name].empty:
             with st.expander(f"📍 {name}", expanded=True):
-                st.dataframe(
-                    data_map[name][["Time", "Status", "Temp", "Precip %", "Wind", "Weather", "Alerts"]],
-                    hide_index=True,
-                    use_container_width=True,
-                )
+                df = data_map[name][["Time", "Status", "Temp", "Precip %", "Wind", "Weather", "Alerts"]].copy()
+                st.dataframe(df, hide_index=True, use_container_width=True)
 
 
 # --- UI START ---
@@ -376,7 +390,7 @@ if st.session_state[scan_key]:
 
             st.caption(get_label_block(risk))
             if worst_pass:
-                st.caption(f"Worst pass: {worst_pass}")
+                st.caption(f"Worst segment: {worst_pass}")
             if reasons:
                 st.caption(", ".join(reasons))
 
@@ -398,16 +412,18 @@ if ref_data:
             seen_dates.add(date_str)
             unique_dates.append(date_str)
 
-    if st.session_state.selected_day in unique_dates:
-        selected_date_str = st.session_state.selected_day
-        st.selectbox(
+    date_options = unique_dates[:10]
+
+    if st.session_state.selected_day in date_options:
+        selected_date_str = st.selectbox(
             "📅 Plan for (Hour-by-Hour):",
-            unique_dates[:10],
-            index=unique_dates[:10].index(selected_date_str),
-            key="selected_date_display",
+            date_options,
+            index=date_options.index(st.session_state.selected_day),
         )
     else:
-        selected_date_str = st.selectbox("📅 Plan for (Hour-by-Hour):", unique_dates[:10])
+        selected_date_str = st.selectbox("📅 Plan for (Hour-by-Hour):", date_options)
+
+    st.session_state.selected_day = selected_date_str
 
     st.subheader(f"📍 Selected Day: {selected_date_str}")
     st.info(route_data["note"])
@@ -439,11 +455,11 @@ if ref_data:
                 row_data = {
                     "Hour": dt.hour,
                     "Time": time_disp,
+                    "Status": stat,
                     "Temp": f"{hour.get('temperature')}°",
                     "Precip %": f"{pop}%" if pop > 0 else "-",
                     "Wind": f"{wind} {hour.get('windDirection')}",
                     "Weather": add_weather_icon(hour.get("shortForecast")),
-                    "Status": stat,
                     "Alerts": ", ".join(alerts_list),
                 }
 
@@ -484,15 +500,15 @@ if ref_data:
         for hour in raw_full:
             dt = parser.parse(hour["startTime"])
             if dt.strftime("%A, %b %d") == selected_date_str:
-                stat, _, alerts_list, wind, pop, daytime, _ = analyze_hour(hour, loc_select)
+                stat, _, alerts_list, wind, pop, _, _ = analyze_hour(hour, loc_select)
                 full_rows.append(
                     {
                         "Time": dt.strftime("%I %p"),
+                        "Status": stat,
                         "Temp": f"{hour.get('temperature')}°",
                         "Precip %": f"{pop}%",
                         "Wind": f"{wind}",
                         "Weather": hour.get("shortForecast"),
-                        "Status": stat,
                         "Alerts": ", ".join(alerts_list),
                     }
                 )
