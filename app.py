@@ -6,19 +6,19 @@ import requests
 import streamlit as st
 
 
-# --- CONFIGURATION ---
 st.set_page_config(page_title="Route Safety Commander V2", page_icon="🚛", layout="wide")
 
 if "selected_day" not in st.session_state:
     st.session_state.selected_day = None
 
 
-# --- ROUTE DATABASE ---
 ROUTES = {
     "Helena, MT (I-90 East)": {
         "direction": "East",
-        "note": "⚠️ Mountain route with major exposure zones. Final rating uses both outbound and return windows, and the worse direction wins.",
-        "mode": "windowed",
+        "note": "⚠️ Helena route uses broad local-time display windows. Outbound shows 7 AM–12 PM local station time. Return shows 12 PM–5 PM local station time.",
+        "mode": "helena_broad",
+        "outbound_range": (7, 12),
+        "return_range": (12, 17),
         "stops_out": [
             "4th of July Pass",
             "Lookout Pass",
@@ -42,26 +42,12 @@ ROUTES = {
             "Lookout Pass": "https://api.weather.gov/gridpoints/MSO/56,102/forecast/hourly",
             "McDonald Pass": "https://api.weather.gov/gridpoints/TFX/62,50/forecast/hourly",
         },
-        # This segment covers the whole exposed corridor, not just one point.
         "segment_sources": {
             "Missoula Flats": [
-                "https://api.weather.gov/gridpoints/MSO/46,95/forecast/hourly",   # Superior / St. Regis side
-                "https://api.weather.gov/gridpoints/MSO/70,85/forecast/hourly",   # central corridor
-                "https://api.weather.gov/gridpoints/MSO/86,76/forecast/hourly",   # Drummond / Garrison side
+                "https://api.weather.gov/gridpoints/MSO/46,95/forecast/hourly",
+                "https://api.weather.gov/gridpoints/MSO/70,85/forecast/hourly",
+                "https://api.weather.gov/gridpoints/MSO/86,76/forecast/hourly",
             ]
-        },
-        # Hours are local to each location's forecast timezone.
-        "windows_out": {
-            "4th of July Pass": (7, 8),
-            "Lookout Pass": (8, 9),
-            "Missoula Flats": (10, 12),
-            "McDonald Pass": (11, 12),
-        },
-        "windows_ret": {
-            "McDonald Pass": (12, 13),
-            "Missoula Flats": (13, 15),
-            "Lookout Pass": (14, 15),
-            "4th of July Pass": (15, 16),
         },
     },
     "DAA Auction (Airway Heights, WA)": {
@@ -178,12 +164,10 @@ ROUTES = {
 }
 
 
-# --- DATA HELPERS ---
 @st.cache_data(ttl=900)
 def fetch_hourly_data(url: str):
     try:
         headers = {"User-Agent": "(vandal-route-planner, contact@example.com)"}
-
         if "points" in url and "gridpoints" not in url:
             r_meta = requests.get(url, headers=headers, timeout=5)
             r_meta.raise_for_status()
@@ -205,12 +189,10 @@ def fetch_active_alerts(lat_lon_str: str):
         r.raise_for_status()
         data = r.json()
         alerts = []
-
         for feature in data.get("features", []):
             event = feature.get("properties", {}).get("event", "")
             if any(x in event for x in ["Winter", "Wind", "Ice", "Blizzard", "Snow", "Flood"]):
                 alerts.append(event.upper())
-
         return list(set(alerts))
     except Exception:
         return []
@@ -228,10 +210,8 @@ def get_int(val):
 def add_weather_icon(forecast_text: str):
     if not forecast_text:
         return ""
-
     text = forecast_text.lower()
     icon = ""
-
     if "snow" in text:
         icon = "🌨️"
     elif "rain" in text:
@@ -246,7 +226,6 @@ def add_weather_icon(forecast_text: str):
         icon = "🌫️"
     elif "wind" in text:
         icon = "💨"
-
     return f"{icon} {forecast_text}"
 
 
@@ -376,7 +355,7 @@ def analyze_hour(row, location_name, trip_direction="Out", overall_direction="Ea
 
 def reason_text_from_reasons(reasons):
     if not reasons:
-        return "General adverse conditions in the selected time window."
+        return "General adverse conditions in the selected time block."
     return ", ".join(reasons[:2])
 
 
@@ -384,7 +363,6 @@ def build_hour_row(hour, status, alerts_list, wind, pop, daytime):
     dt = parser.parse(hour["startTime"])
     time_disp = dt.strftime("%I %p")
     time_disp = f"☀️ {time_disp}" if daytime else f"🌑 {time_disp}"
-
     return {
         "Hour": dt.hour,
         "Time": time_disp,
@@ -399,37 +377,13 @@ def build_hour_row(hour, status, alerts_list, wind, pop, daytime):
 
 def render_trip_table(data_map, location_order):
     for name in location_order:
-        if name in data_map and not data_map[name].empty:
-            with st.expander(f"📍 {name}", expanded=True):
-                df = data_map[name][["Time", "Status", "Temp", "Precip %", "Wind", "Weather", "Alerts"]].copy()
-                st.dataframe(df, hide_index=True, use_container_width=True)
-
-
-def summarize_day_hourly(route_data, selected_date_str):
-    days_summary = {selected_date_str: {"risk": 0, "reasons": set(), "worst_pass": None}}
-
-    for loc_name, url in route_data["urls"].items():
-        raw_data = fetch_hourly_data(url)
-
-        for period in raw_data:
-            dt = parser.parse(period["startTime"])
-            date_str = dt.strftime("%A, %b %d")
-            if date_str != selected_date_str:
-                continue
-
-            if 7 <= dt.hour <= 19:
-                _, score, _, _, _, _, reasons = analyze_hour(
-                    period, loc_name, "Out", route_data.get("direction")
-                )
-
-                if score > days_summary[date_str]["risk"]:
-                    days_summary[date_str]["risk"] = score
-                    days_summary[date_str]["worst_pass"] = loc_name
-
-                for reason in reasons:
-                    days_summary[date_str]["reasons"].add(f"{reason} ({loc_name})")
-
-    return days_summary[selected_date_str]
+        with st.expander(f"📍 {name}", expanded=True):
+            df = data_map.get(name, pd.DataFrame())
+            if df is None or df.empty:
+                st.info("No forecast rows found in this time block for that day.")
+            else:
+                display_df = df[["Time", "Status", "Temp", "Precip %", "Wind", "Weather", "Alerts"]].copy()
+                st.dataframe(display_df, hide_index=True, use_container_width=True)
 
 
 def get_stop_sources(route_data, stop_name):
@@ -438,81 +392,98 @@ def get_stop_sources(route_data, stop_name):
     return [route_data["urls"][stop_name]]
 
 
-def summarize_day_windowed(route_data, selected_date_str):
-    direction_results = {}
-    final_rows = {}
-
-    for direction_key, stops_key, windows_key, trip_label in [
-        ("outbound", "stops_out", "windows_out", "Out"),
-        ("return", "stops_ret", "windows_ret", "Ret"),
-    ]:
-        stops = route_data[stops_key]
-        windows = route_data[windows_key]
-        segment_tables = {}
-        worst_score = -1
-        worst_segment = None
-        worst_reasons = []
-        worst_status = "🟢"
-
-        for stop in stops:
-            source_urls = get_stop_sources(route_data, stop)
-            start_hour, end_hour = windows[stop]
-            matching_rows = []
-            segment_worst_score = -1
-            segment_worst_reasons = []
-            segment_worst_status = "🟢"
-
-            for url in source_urls:
-                raw = fetch_hourly_data(url)
-
-                for hour in raw:
-                    dt = parser.parse(hour["startTime"])
-                    if dt.strftime("%A, %b %d") != selected_date_str:
-                        continue
-
-                    if start_hour <= dt.hour <= end_hour:
-                        status, score, alerts_list, wind, pop, daytime, reasons = analyze_hour(
-                            hour, stop, trip_label, route_data.get("direction")
-                        )
-                        matching_rows.append(build_hour_row(hour, status, alerts_list, wind, pop, daytime))
-
-                        if score > segment_worst_score:
-                            segment_worst_score = score
-                            segment_worst_reasons = reasons
-                            segment_worst_status = status
-
-            if matching_rows:
-                df = pd.DataFrame(matching_rows)
-                df = df.sort_values(by=["Hour", "Time"]).drop_duplicates(
-                    subset=["Time", "Status", "Temp", "Precip %", "Wind", "Weather", "Alerts"]
+def summarize_day_hourly(route_data, selected_date_str):
+    result = {"risk": 0, "reasons": set(), "worst_pass": None}
+    for loc_name, url in route_data["urls"].items():
+        raw_data = fetch_hourly_data(url)
+        for period in raw_data:
+            dt = parser.parse(period["startTime"])
+            if dt.strftime("%A, %b %d") != selected_date_str:
+                continue
+            if 7 <= dt.hour <= 19:
+                _, score, _, _, _, _, reasons = analyze_hour(
+                    period, loc_name, "Out", route_data.get("direction")
                 )
-                segment_tables[stop] = df
-            else:
-                segment_tables[stop] = pd.DataFrame()
+                if score > result["risk"]:
+                    result["risk"] = score
+                    result["worst_pass"] = loc_name
+                for reason in reasons:
+                    result["reasons"].add(f"{reason} ({loc_name})")
+    return result
 
-            if segment_worst_score > worst_score:
-                worst_score = segment_worst_score
-                worst_segment = stop
-                worst_reasons = segment_worst_reasons
-                worst_status = segment_worst_status
 
-        direction_results[direction_key] = {
-            "score": max(worst_score, 0),
-            "segment": worst_segment,
-            "reasons": worst_reasons,
-            "status": worst_status,
-            "tables": segment_tables,
-        }
+def build_helena_block(route_data, selected_date_str, trip_label, start_hour, end_hour, stops):
+    segment_tables = {}
+    worst_score = -1
+    worst_segment = None
+    worst_reasons = []
+    worst_status = "🟢"
 
-    if direction_results["outbound"]["score"] >= direction_results["return"]["score"]:
+    for stop in stops:
+        matching_rows = []
+        segment_worst_score = -1
+        segment_worst_reasons = []
+        segment_worst_status = "🟢"
+
+        for url in get_stop_sources(route_data, stop):
+            raw = fetch_hourly_data(url)
+            for hour in raw:
+                dt = parser.parse(hour["startTime"])
+                if dt.strftime("%A, %b %d") != selected_date_str:
+                    continue
+                if start_hour <= dt.hour <= end_hour:
+                    status, score, alerts_list, wind, pop, daytime, reasons = analyze_hour(
+                        hour, stop, trip_label, route_data.get("direction")
+                    )
+                    matching_rows.append(build_hour_row(hour, status, alerts_list, wind, pop, daytime))
+                    if score > segment_worst_score:
+                        segment_worst_score = score
+                        segment_worst_reasons = reasons
+                        segment_worst_status = status
+
+        if matching_rows:
+            df = pd.DataFrame(matching_rows)
+            df = df.sort_values(by=["Hour", "Time"]).drop_duplicates(
+                subset=["Time", "Status", "Temp", "Precip %", "Wind", "Weather", "Alerts"]
+            )
+            segment_tables[stop] = df
+        else:
+            segment_tables[stop] = pd.DataFrame(
+                columns=["Hour", "Time", "Status", "Temp", "Precip %", "Wind", "Weather", "Alerts"]
+            )
+
+        if segment_worst_score > worst_score:
+            worst_score = segment_worst_score
+            worst_segment = stop
+            worst_reasons = segment_worst_reasons
+            worst_status = segment_worst_status
+
+    return {
+        "score": max(worst_score, 0),
+        "segment": worst_segment,
+        "reasons": worst_reasons,
+        "status": worst_status,
+        "tables": segment_tables,
+    }
+
+
+def summarize_day_helena(route_data, selected_date_str):
+    out_start, out_end = route_data["outbound_range"]
+    ret_start, ret_end = route_data["return_range"]
+
+    outbound = build_helena_block(
+        route_data, selected_date_str, "Out", out_start, out_end, route_data["stops_out"]
+    )
+    returned = build_helena_block(
+        route_data, selected_date_str, "Ret", ret_start, ret_end, route_data["stops_ret"]
+    )
+
+    if outbound["score"] >= returned["score"]:
         final_direction = "Outbound"
-        final = direction_results["outbound"]
+        final = outbound
     else:
         final_direction = "Return"
-        final = direction_results["return"]
-
-    final_rows["outbound_tables"] = direction_results["outbound"]["tables"]
-    final_rows["return_tables"] = direction_results["return"]["tables"]
+        final = returned
 
     return {
         "final_score": final["score"],
@@ -521,14 +492,13 @@ def summarize_day_windowed(route_data, selected_date_str):
         "driven_by": final_direction,
         "worst_segment": final["segment"],
         "why": reason_text_from_reasons(final["reasons"]),
-        "outbound_score": direction_results["outbound"]["score"],
-        "return_score": direction_results["return"]["score"],
-        "outbound_tables": final_rows["outbound_tables"],
-        "return_tables": final_rows["return_tables"],
+        "outbound_score": outbound["score"],
+        "return_score": returned["score"],
+        "outbound_tables": outbound["tables"],
+        "return_tables": returned["tables"],
     }
 
 
-# --- UI START ---
 st.title("🚛 Route Safety Commander V2")
 
 route_name = st.selectbox("Select Destination", list(ROUTES.keys()))
@@ -546,7 +516,6 @@ if scan_key not in st.session_state:
 
 if st.session_state[scan_key]:
     st.subheader("📅 Route Outlook")
-
     ref_url = list(route_data["urls"].values())[0]
     ref_data = fetch_hourly_data(ref_url)
     days_available = []
@@ -560,12 +529,9 @@ if st.session_state[scan_key]:
                 seen_dates.add(date_str)
                 days_available.append(date_str)
 
-    date_keys = days_available[:10]
-
-    # Vertical rendering keeps the order correct on phones.
-    for date_key in date_keys:
-        if route_data.get("mode") == "windowed":
-            summary = summarize_day_windowed(route_data, date_key)
+    for date_key in days_available[:10]:
+        if route_data.get("mode") == "helena_broad":
+            summary = summarize_day_helena(route_data, date_key)
             risk = summary["final_score"]
             label = summary["final_label"]
             worst_pass = summary["worst_segment"]
@@ -593,7 +559,6 @@ if st.session_state[scan_key]:
             st.markdown("---")
 
 st.divider()
-
 st.markdown("### Tactical Daily Deep-Dive")
 
 ref_url = list(route_data["urls"].values())[0]
@@ -602,7 +567,6 @@ ref_data = fetch_hourly_data(ref_url)
 if ref_data:
     unique_dates = []
     seen_dates = set()
-
     for period in ref_data:
         dt = parser.parse(period["startTime"])
         date_str = dt.strftime("%A, %b %d")
@@ -634,8 +598,8 @@ if ref_data:
             for alert in active_alerts:
                 official_alerts_found.append(f"**{name}:** {alert}")
 
-    if route_data.get("mode") == "windowed":
-        summary = summarize_day_windowed(route_data, selected_date_str)
+    if route_data.get("mode") == "helena_broad":
+        summary = summarize_day_helena(route_data, selected_date_str)
 
         st.markdown("### Final Route Call")
         c1, c2, c3, c4 = st.columns(4)
@@ -670,7 +634,7 @@ if ref_data:
             for hour in raw:
                 dt = parser.parse(hour["startTime"])
                 if dt.strftime("%A, %b %d") == selected_date_str:
-                    stat, score, alerts_list, wind, pop, daytime, _ = analyze_hour(
+                    stat, _, alerts_list, wind, pop, daytime, _ = analyze_hour(
                         hour, name, "Out", route_data.get("direction")
                     )
                     row_data = build_hour_row(hour, stat, alerts_list, wind, pop, daytime)
@@ -706,7 +670,6 @@ if ref_data:
     with tab_full:
         st.write("Full 24-hour breakdown for a specific location.")
         loc_select = st.selectbox("Select Location", list(route_data["coords"].keys()))
-
         raw_full = []
         for url in get_stop_sources(route_data, loc_select):
             raw_full.extend(fetch_hourly_data(url))
